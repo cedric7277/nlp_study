@@ -1,0 +1,11 @@
+# 环境变量
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# model
+model.bin
