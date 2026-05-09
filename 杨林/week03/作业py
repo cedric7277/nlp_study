@@ -1,0 +1,204 @@
+import random
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+
+# ─── 配置参数 ──────────────────────────────────────────────
+SEED        = 42
+N_SAMPLES   = 6000
+SEQ_LEN     = 5
+EMBED_DIM   = 64
+HIDDEN_DIM  = 64
+LEARNING_RATE = 1e-3
+BATCH_SIZE  = 64
+EPOCHS      = 20
+TRAIN_SPLIT = 0.8
+NUM_CLASSES = 5
+
+random.seed(SEED)
+torch.manual_seed(SEED)
+
+# ─── 字符库（不含「你」字）─────────────────────────────────
+CHARS_POOL = (
+    '客户卡仕达看见啊还是觉得还是打卡红烧鸡块等哈开完会殴斗'
+    '朝中措组选哦参加披萨经常尿失禁草鸡蛋哦那我后家搜都毫无'
+    '啊什么叫淡季旺季哦级哦我你好i我的好觉得我加你的我啤酒'
+    '席间哦今晚麻烦了胡林下经济那破的怎么处理看手机麻辣口' 
+)
+
+# ─── 数据生成 ──────────────────────────────────────────────
+def generate_sentence(target_pos):
+    """生成一条样本：5字句子，「你」字固定在target_pos位置（0-indexed）"""
+    chars = random.sample(CHARS_POOL, SEQ_LEN - 1)
+    chars.insert(target_pos, '你')
+    return ''.join(chars), target_pos
+
+def create_data(total_samples):
+    """构建均衡数据集"""
+    per_class = total_samples // NUM_CLASSES
+    data = []
+    for pos in range(NUM_CLASSES):
+        for _ in range(per_class):
+            sent, label = generate_sentence(pos)
+            data.append((sent, label))
+    random.shuffle(data)
+    return data
+
+# ─── 词汇表构建 ────────────────────────────────────────────
+def build_vocab(data):
+    vocab = {'<PAD>': 0, '<UNK>': 1}
+    for sent, _ in data:
+        for ch in sent:
+            if ch not in vocab:
+                vocab[ch] = len(vocab)
+    return vocab
+
+def encode_sentence(sent, vocab):
+    ids = [vocab.get(ch, 1) for ch in sent[:SEQ_LEN]]
+    ids += [0] * (SEQ_LEN - len(ids))
+    return ids
+
+# ─── 数据集类 ──────────────────────────────────────────────
+class YouPositionDataset(Dataset):
+    def __init__(self, data, vocab):
+        self.X = [encode_sentence(s, vocab) for s, _ in data]
+        self.y = [label for _, label in data]
+    
+    def __len__(self):
+        return len(self.y)
+    
+    def __getitem__(self, idx):
+        return (
+            torch.tensor(self.X[idx], dtype=torch.long),
+            torch.tensor(self.y[idx], dtype=torch.long),
+        )
+
+# ─── 模型定义 ──────────────────────────────────────────────
+class RNNModel(nn.Module):
+    """RNN分类器"""
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, EMBED_DIM, padding_idx=0)
+        self.rnn = nn.RNN(EMBED_DIM, HIDDEN_DIM, batch_first=True)
+        self.fc = nn.Linear(HIDDEN_DIM, NUM_CLASSES)
+    
+    def forward(self, x):
+        emb = self.embedding(x)  # (B, L, E)
+        out, _ = self.rnn(emb)   # (B, L, H)
+        final_h = out[:, -1, :]  # 取最后时刻隐藏状态 (B, H)
+        return self.fc(final_h)
+
+class LSTMModel(nn.Module):
+    """LSTM分类器"""
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, EMBED_DIM, padding_idx=0)
+        self.lstm = nn.LSTM(EMBED_DIM, HIDDEN_DIM, batch_first=True)
+        self.fc = nn.Linear(HIDDEN_DIM, NUM_CLASSES)
+    
+    def forward(self, x):
+        emb = self.embedding(x)   # (B, L, E)
+        out, (h_n, _) = self.lstm(emb)  # (B, L, H)
+        final_h = h_n.squeeze(0)  # (B, H)
+        return self.fc(final_h)
+
+# ─── 训练与评估 ────────────────────────────────────────────
+def eval_model(model, loader):
+    model.eval()
+    correct = total = 0
+    with torch.no_grad():
+        for X, y in loader:
+            pred = model(X).argmax(dim=1)
+            correct += (pred == y).sum().item()
+            total += len(y)
+    return correct / total
+
+def train_model(model, train_loader, val_loader, model_name):
+    print(f"\n训练 {model_name}")
+    print("-" * 40)
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        total_loss = 0.0
+        
+        for X, y in train_loader:
+            optimizer.zero_grad()
+            logits = model(X)
+            loss = criterion(logits, y)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        
+        if epoch % 4 == 0 or epoch == 1:
+            avg_loss = total_loss / len(train_loader)
+            val_acc = eval_model(model, val_loader)
+            print(f"Epoch {epoch:2d}/{EPOCHS} | Loss: {avg_loss:.4f} | Acc: {val_acc:.4f}")
+    
+    final_acc = eval_model(model, val_loader)
+    print(f"最终验证准确率: {final_acc:.4f}")
+    return final_acc, model
+
+# ─── 主程序 ────────────────────────────────────────────────
+def main():
+    print("=== 「你」字位置分类任务 ===")
+    print("任务描述：预测「你」字在5字句子中的位置（第1~5位）")
+    
+    # 数据准备
+    print("\n准备数据集...")
+    data = create_data(N_SAMPLES)
+    vocab = build_vocab(data)
+    print(f"样本总数: {len(data)}")
+    print(f"词表大小: {len(vocab)}")
+    print(f"随机猜测基准: {1/NUM_CLASSES:.1%}")
+    
+    # 划分数据集
+    split_idx = int(len(data) * TRAIN_SPLIT)
+    train_loader = DataLoader(
+        YouPositionDataset(data[:split_idx], vocab),
+        batch_size=BATCH_SIZE, shuffle=True
+    )
+    val_loader = DataLoader(
+        YouPositionDataset(data[split_idx:], vocab),
+        batch_size=BATCH_SIZE
+    )
+    
+    # 训练RNN模型
+    rnn_acc, rnn_model = train_model(
+        RNNModel(len(vocab)), train_loader, val_loader, "RNN模型"
+    )
+    
+    # 训练LSTM模型
+    lstm_acc, lstm_model = train_model(
+        LSTMModel(len(vocab)), train_loader, val_loader, "LSTM模型"
+    )
+    
+    # 结果对比
+    print("\n=== 模型对比结果 ===")
+    print(f"RNN模型准确率: {rnn_acc:.4f}")
+    print(f"LSTM模型准确率: {lstm_acc:.4f}")
+    print(f"随机猜测基准: {1/NUM_CLASSES:.4f}")
+    
+    # 推理示例
+    print("\n=== 推理示例 ===")
+    rnn_model.eval()
+    lstm_model.eval()
+    
+    test_cases = [
+        ('你是一个人', 0),
+        ('我喜欢你呀', 2),
+        ('今天你好吗', 2),
+        ('世界属于你', 4),
+    ]
+    
+    with torch.no_grad():
+        for sent, true_pos in test_cases:
+            ids = torch.tensor([encode_sentence(sent, vocab)], dtype=torch.long)
+            rnn_pred = rnn_model(ids).argmax(dim=1).item()
+            lstm_pred = lstm_model(ids).argmax(dim=1).item()
+            print(f"句子: {sent} | 真实位置: 第{true_pos+1}位 | RNN预测: 第{rnn_pred+1}位 | LSTM预测: 第{lstm_pred+1}位")
+
+if __name__ == '__main__':
+    main()
