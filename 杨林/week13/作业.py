@@ -1,18 +1,17 @@
+import argparse
+import json
+import html
+from pathlib import Path
 
-导入 命令行参数解析
-导入 JSON
-导入 HTML
-从 路径操作模块import 路径对象
 
-
-模板 = """<!DOCTYPE html>
+TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{word} - 闪卡</title>
+<title>{word} - Flash Card</title>
 <style>
- :root {{
+  :root {{
     --bg: #f5f7fb;
     --card: #ffffff;
     --ink: #1f2937;
@@ -26,12 +25,12 @@
   body {{
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-                 "微软雅黑", Roboto, sans-serif;
-    背景: var(--bg);
-    颜色: var(--ink);
-    最小高度: 100vh;
-    显示方式: flex;
-    对齐方式: 居中;
+                 "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
     justify-content: center;
     padding: 24px;
   }}
@@ -140,7 +139,7 @@
         {examples_html}
       </ul>
 
-      <div class="footer">闪卡 · 学一个词，记一组词</div>
+      <div class="footer">Flash Card · 学一个词，记一组词</div>
     </div>
   </div>
 </body>
